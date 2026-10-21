@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CPU Scheduling Simulator</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f27;--mu:#667085;--bd:#dde1e8;--ac:#3b6ef5;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14161a;--card:#1d2026;--tx:#e8eaee;--mu:#98a0ae;--bd:#2f343d;--ac:#6b93ff;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px}
+.w{max-width:960px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;margin:0 0 10px}
+p.s{color:var(--mu);margin:0 0 16px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:14px}
+.r{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{font-size:12px;color:var(--mu);display:flex;flex-direction:column;gap:3px}
+input,select{background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:7px 9px;font:inherit}
+input[type=number]{width:74px}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}
+button.g{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+.o{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--bd);white-space:nowrap}
+th{color:var(--mu);font-weight:500;font-size:12px}
+.gt{display:flex;min-height:44px}
+.seg{height:44px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;border-right:1px solid rgba(255,255,255,.5);flex:none;overflow:hidden}
+.seg.idle{background:repeating-linear-gradient(45deg,var(--bd),var(--bd) 4px,transparent 4px,transparent 8px);color:var(--mu);font-weight:400}
+.tk{display:flex;font-size:11px;color:var(--mu);margin-top:3px}
+.tk span{flex:none;text-align:left}
+.st{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.st div{flex:1;min-width:130px;background:var(--bg);border-radius:8px;padding:8px 10px}
+.st b{display:block;font-size:19px}.st small{color:var(--mu)}
+.best{color:var(--ac);font-weight:700}
+</style></head><body><div class="w">
+<h1>CPU Scheduling Simulator</h1>
+<p class="s">Edit the processes, pick an algorithm, and watch the Gantt chart build. Lower priority number = higher priority.</p>
+
+<div class="c"><h2>Processes</h2><div class="o"><table><thead><tr><th>PID</th><th>Arrival</th><th>Burst</th><th>Priority</th><th></th></tr></thead><tbody id="pt"></tbody></table></div>
+<div class="r" style="margin-top:10px"><button class="g" id="add">+ Add process</button><button class="g" id="rnd">Randomize</button></div></div>
+
+<div class="c"><div class="r">
+<label>Algorithm<select id="al"></select></label>
+<label id="ql">Time quantum<input type="number" id="q" min="1" value="3"></label>
+<button id="play">▶ Play</button><button class="g" id="all">Show full chart</button></div></div>
+
+<div class="c"><h2 id="gh">Gantt chart</h2><div class="o"><div class="gt" id="gt"></div><div class="tk" id="tk"></div></div>
+<div class="st" id="st"></div></div>
+
+<div class="c"><h2>Per-process results</h2><div class="o"><table><thead><tr><th>PID</th><th>Arrival</th><th>Burst</th><th>Completion</th><th>Turnaround</th><th>Waiting</th><th>Response</th></tr></thead><tbody id="rt"></tbody></table></div></div>
+
+<div class="c"><h2>Compare all algorithms</h2><div class="o"><table><thead><tr><th>Algorithm</th><th>Avg waiting</th><th>Avg turnaround</th><th>Avg response</th><th>CPU util.</th></tr></thead><tbody id="cp"></tbody></table></div></div>
+</div>
+<script>
+const A={fcfs:"FCFS",sjf:"SJF (non-preemptive)",srtf:"SRTF (preemptive SJF)",prio:"Priority (non-preemptive)",prioP:"Priority (preemptive)",rr:"Round Robin"};
+const U=30,$=id=>document.getElementById(id);
+let P=[[0,5,2],[1,3,1],[2,8,4],[3,6,3]].map((a,i)=>({id:"P"+(i+1),at:a[0],bt:a[1],pr:a[2]}));
+let shown=0,total=0,timer=null,cache=null;
+const col=i=>`hsl(${(i*57+215)%360} 58% 46%)`;
+$("al").innerHTML=Object.entries(A).map(([k,v])=>`<option value="${k}">${v}</option>`).join("");
+
+function sim(ps,algo,q){
+ const n=ps.length,rem=ps.map(p=>p.bt),first=ps.map(()=>-1),comp=ps.map(()=>0),pre=algo=="srtf"||algo=="prioP";
+ let t=0,done=0,cur=-1,tl=[],Q=[],ql=0;
+ const key=i=>{const p=ps[i],k=algo=="fcfs"?[p.at]:algo=="sjf"||algo=="srtf"?[rem[i],p.at]:[p.pr,p.at];return [...k,i==cur?0:1,i]};
+ const cmp=(a,b)=>{const x=key(a),y=key(b);for(let j=0;j<x.length;j++)if(x[j]!=y[j])return x[j]-y[j];return 0};
+ while(done<n&&t<5000){
+  if(algo=="rr"){
+   ps.forEach((p,i)=>{if(p.at==t)Q.push(i)});
+   if(cur>=0&&rem[cur]==0)cur=-1;
+   if(cur>=0&&ql==0){Q.push(cur);cur=-1}
+   if(cur<0&&Q.length){cur=Q.shift();ql=q}
+  }else{
+   if(cur>=0&&rem[cur]==0)cur=-1;
+   if(cur<0||pre){const r=ps.map((_,i)=>i).filter(i=>ps[i].at<=t&&rem[i]>0).sort(cmp);if(r.length)cur=r[0]}
+  }
+  if(cur>=0){tl.push(cur);if(first[cur]<0)first[cur]=t;rem[cur]--;ql--;if(rem[cur]==0){comp[cur]=t+1;done++}}
+  else tl.push(-1);
+  t++;
+ }
+ const segs=[];tl.forEach((x,i)=>{const l=segs[segs.length-1];if(l&&l.p==x)l.n++;else segs.push({p:x,s:i,n:1})});
+ const rows=ps.map((p,i)=>{const tat=comp[i]-p.at;return{p,comp:comp[i],tat,wt:tat-p.bt,rt:first[i]-p.at}});
+ const avg=k=>rows.reduce((a,r)=>a+r[k],0)/n,busy=tl.filter(x=>x>=0).length;
+ return{tl,segs,rows,wt:avg("wt"),tat:avg("tat"),rt:avg("rt"),util:busy/tl.length*100,thr:n/tl.length,len:tl.length};
+}
+const f=x=>(Math.round(x*100)/100).toString();
+
+function readP(){return P.map(p=>({...p,at:Math.max(0,+p.at|0),bt:Math.max(1,+p.bt|0),pr:+p.pr|0}))}
+function run(){
+ const ps=readP();if(!ps.length)return;
+ const algo=$("al").value,q=Math.max(1,+$("q").value|0);
+ $("ql").style.display=algo=="rr"?"":"none";
+ cache=sim(ps,algo,q);total=cache.len;shown=Math.min(shown||total,total);
+ results(ps,algo,q);draw();
+}
+function results(ps,algo,q){
+ const r=cache;
+ $("rt").innerHTML=r.rows.map(x=>`<tr><td>${x.p.id}</td><td>${x.p.at}</td><td>${x.p.bt}</td><td>${x.comp}</td><td>${x.tat}</td><td>${x.wt}</td><td>${x.rt}</td></tr>`).join("");
+ $("st").innerHTML=[["Avg waiting",f(r.wt)],["Avg turnaround",f(r.tat)],["Avg response",f(r.rt)],["CPU utilization",f(r.util)+"%"],["Throughput",f(r.thr)+" /unit"]].map(a=>`<div><small>${a[0]}</small><b>${a[1]}</b></div>`).join("");
+ const res=Object.keys(A).map(k=>({k,s:sim(ps,k,q)})),m=Math.min(...res.map(x=>x.s.wt));
+ $("cp").innerHTML=res.map(({k,s})=>`<tr class="${s.wt==m?"best":""}"><td>${A[k]}${s.wt==m?" ★":""}</td><td>${f(s.wt)}</td><td>${f(s.tat)}</td><td>${f(s.rt)}</td><td>${f(s.util)}%</td></tr>`).join("");
+}
+function draw(){
+ const r=cache,ids=readP().map(p=>p.id);
+ let g="",k="";
+ r.segs.forEach(s=>{
+  if(s.s>=shown)return;
+  const n=Math.min(s.n,shown-s.s),w=n*U;
+  g+=s.p<0?`<div class="seg idle" style="width:${w}px">idle</div>`:`<div class="seg" style="width:${w}px;background:${col(s.p)}">${ids[s.p]}</div>`;
+  k+=`<span style="width:${w}px">${s.s}</span>`;
+ });
+ k+=`<span>${shown}</span>`;
+ $("gt").innerHTML=g;$("tk").innerHTML=k;
+ $("gh").textContent=`Gantt chart (t = ${shown} / ${total})`;
+}
+function table(){
+ $("pt").innerHTML=P.map((p,i)=>`<tr><td><b style="color:${col(i)}">${p.id}</b></td>`+["at","bt","pr"].map(f=>`<td><input type="number" min="${f=="bt"?1:0}" data-i="${i}" data-f="${f}" value="${p[f]}"></td>`).join("")+`<td><button class="g" data-d="${i}">✕</button></td></tr>`).join("");
+}
+$("pt").addEventListener("input",e=>{const t=e.target;if(t.dataset.f){P[t.dataset.i][t.dataset.f]=t.value;stop();shown=0;run()}});
+$("pt").addEventListener("click",e=>{const d=e.target.dataset.d;if(d!=null&&P.length>1){P.splice(+d,1);P.forEach((p,i)=>p.id="P"+(i+1));table();stop();shown=0;run()}});
+$("add").onclick=()=>{P.push({id:"P"+(P.length+1),at:0,bt:4,pr:1});table();stop();shown=0;run()};
+$("rnd").onclick=()=>{const n=4+Math.floor(Math.random()*3);P=Array.from({length:n},(_,i)=>({id:"P"+(i+1),at:Math.floor(Math.random()*8),bt:1+Math.floor(Math.random()*9),pr:1+Math.floor(Math.random()*5)}));table();stop();shown=0;run()};
+$("al").onchange=$("q").oninput=()=>{stop();shown=0;run()};
+function stop(){clearInterval(timer);timer=null;$("play").textContent="▶ Play"}
+$("play").onclick=()=>{
+ if(timer){stop();return}
+ if(shown>=total)shown=0;
+ $("play").textContent="⏸ Pause";
+ timer=setInterval(()=>{shown++;draw();if(shown>=total)stop()},350);
+ shown++;draw();
+};
+$("all").onclick=()=>{stop();shown=total;draw()};
+table();run();
+</script></body></html>
